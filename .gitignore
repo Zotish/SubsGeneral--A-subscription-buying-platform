@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+*.db
+.env
+.env.*
+backend/.DS_Store
+frontend/.DS_Store

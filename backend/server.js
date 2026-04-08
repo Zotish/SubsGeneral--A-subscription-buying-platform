@@ -126,6 +126,12 @@ const initDb = () => {
       terms TEXT DEFAULT '',
       imageUrl TEXT DEFAULT '',
       plans TEXT NOT NULL DEFAULT '[]',
+      isTopSell INTEGER NOT NULL DEFAULT 0,
+      isHotProduct INTEGER NOT NULL DEFAULT 0,
+      isBestSearch INTEGER NOT NULL DEFAULT 0,
+      isSpecial INTEGER NOT NULL DEFAULT 0,
+      originalPrice TEXT DEFAULT '',
+      relatedContent TEXT DEFAULT '',
       categoryId INTEGER NOT NULL
     );
 
@@ -224,6 +230,21 @@ try {
   // Column already exists in existing databases.
 }
 try {
+  exec("ALTER TABLE products ADD COLUMN isTopSell INTEGER NOT NULL DEFAULT 0");
+} catch (_) {
+  // Column already exists in existing databases.
+}
+try {
+  exec("ALTER TABLE products ADD COLUMN isHotProduct INTEGER NOT NULL DEFAULT 0");
+} catch (_) {
+  // Column already exists in existing databases.
+}
+try {
+  exec("ALTER TABLE products ADD COLUMN isBestSearch INTEGER NOT NULL DEFAULT 0");
+} catch (_) {
+  // Column already exists in existing databases.
+}
+try {
   exec("ALTER TABLE payments ADD COLUMN adminMessage TEXT DEFAULT ''");
 } catch (_) {
   // Column already exists in existing databases.
@@ -242,6 +263,24 @@ try {
   exec("ALTER TABLE faqs ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0");
 } catch (_) {
   // Column already exists in existing databases.
+}
+try {
+  exec("ALTER TABLE products ADD COLUMN isSpecial INTEGER NOT NULL DEFAULT 0");
+} catch (_) {
+  // Column already exists in existing databases.
+}
+try {
+  exec("ALTER TABLE products ADD COLUMN originalPrice TEXT DEFAULT ''");
+} catch (_) {
+  // Column already exists in existing databases.
+}
+try {
+  exec("ALTER TABLE products ADD COLUMN relatedContent TEXT DEFAULT ''");
+} catch (_) {
+}
+try {
+  exec("ALTER TABLE categories ADD COLUMN imageUrl TEXT DEFAULT ''");
+} catch (_) {
 }
 
 const slugify = (value) =>
@@ -466,6 +505,12 @@ app.get('/api/products', (_req, res) => {
     products.map((p) => ({
       ...p,
       plans: parsePlans(p.plans),
+      isTopSell: !!p.isTopSell,
+      isHotProduct: !!p.isHotProduct,
+      isBestSearch: !!p.isBestSearch,
+      isSpecial: !!p.isSpecial,
+      originalPrice: p.originalPrice || '',
+      relatedContent: p.relatedContent || '',
       category: { id: p.categoryId, name: p.categoryName, slug: p.categorySlug }
     }))
   );
@@ -483,6 +528,12 @@ app.get('/api/products/:id', (req, res) => {
   res.json({
     ...p,
     plans: parsePlans(p.plans),
+    isTopSell: !!p.isTopSell,
+    isHotProduct: !!p.isHotProduct,
+    isBestSearch: !!p.isBestSearch,
+    isSpecial: !!p.isSpecial,
+    originalPrice: p.originalPrice || '',
+    relatedContent: p.relatedContent || '',
     category: { id: p.categoryId, name: p.categoryName, slug: p.categorySlug }
   });
 });
@@ -688,19 +739,23 @@ app.get('/api/admin/categories', auth, requireAdmin, (_req, res) => {
   res.json(categories);
 });
 
-app.post('/api/admin/categories', auth, requireAdmin, (req, res) => {
+app.post('/api/admin/categories', auth, requireAdmin, upload.single('image'), (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ message: 'Name is required.' });
   const exists = get('SELECT id FROM categories WHERE name = ?', [name]);
   if (exists) return res.status(400).json({ message: 'Category exists.' });
-  const result = run('INSERT INTO categories (name, slug) VALUES (?, ?)', [name, slugify(name)]);
-  res.status(201).json({ id: result.lastInsertRowid, name, slug: slugify(name) });
+  const imageUrl = req.file ? `/uploads/${req.file.filename}` : '';
+  const result = run('INSERT INTO categories (name, slug, imageUrl) VALUES (?, ?, ?)', [name, slugify(name), imageUrl]);
+  res.status(201).json({ id: result.lastInsertRowid, name, slug: slugify(name), imageUrl });
 });
 
-app.put('/api/admin/categories/:id', auth, requireAdmin, (req, res) => {
+app.put('/api/admin/categories/:id', auth, requireAdmin, upload.single('image'), (req, res) => {
   const { name } = req.body || {};
   if (!name) return res.status(400).json({ message: 'Name is required.' });
-  run('UPDATE categories SET name = ?, slug = ? WHERE id = ?', [name, slugify(name), req.params.id]);
+  const existing = get('SELECT * FROM categories WHERE id = ?', [req.params.id]);
+  if (!existing) return res.status(404).json({ message: 'Not found.' });
+  const imageUrl = req.file ? `/uploads/${req.file.filename}` : (existing.imageUrl || '');
+  run('UPDATE categories SET name = ?, slug = ?, imageUrl = ? WHERE id = ?', [name, slugify(name), imageUrl, req.params.id]);
   const category = get('SELECT * FROM categories WHERE id = ?', [req.params.id]);
   res.json(category);
 });
@@ -720,6 +775,12 @@ app.get('/api/admin/products', auth, requireAdmin, (_req, res) => {
     products.map((p) => ({
       ...p,
       plans: parsePlans(p.plans),
+      isTopSell: !!p.isTopSell,
+      isHotProduct: !!p.isHotProduct,
+      isBestSearch: !!p.isBestSearch,
+      isSpecial: !!p.isSpecial,
+      originalPrice: p.originalPrice || '',
+      relatedContent: p.relatedContent || '',
       category: { id: p.categoryId, name: p.categoryName, slug: p.categorySlug }
     }))
   );
@@ -947,7 +1008,13 @@ app.post('/api/admin/products', auth, requireAdmin, upload.single('image'), (req
     description = '',
     details = '',
     terms = '',
-    plans
+    plans,
+    isTopSell = 0,
+    isHotProduct = 0,
+    isBestSearch = 0,
+    isSpecial = 0,
+    originalPrice = '',
+    relatedContent = ''
   } = req.body || {};
   if (!name || !price || !categoryId) return res.status(400).json({ message: 'Missing fields.' });
   const catId = Number(categoryId);
@@ -966,9 +1033,26 @@ app.post('/api/admin/products', auth, requireAdmin, upload.single('image'), (req
   }
   try {
     const result = run(
-      `INSERT INTO products (name, slug, price, status, description, details, terms, imageUrl, plans, categoryId)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, slug, price, status, description, details, terms, imageUrl, plansValue, catId]
+      `INSERT INTO products (name, slug, price, status, description, details, terms, imageUrl, plans, isTopSell, isHotProduct, isBestSearch, isSpecial, originalPrice, relatedContent, categoryId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        name,
+        slug,
+        price,
+        status,
+        description,
+        details,
+        terms,
+        imageUrl,
+        plansValue,
+        Number(isTopSell) ? 1 : 0,
+        Number(isHotProduct) ? 1 : 0,
+        Number(isBestSearch) ? 1 : 0,
+        Number(isSpecial) ? 1 : 0,
+        originalPrice,
+        relatedContent,
+        catId
+      ]
     );
     res.status(201).json({ id: result.lastInsertRowid });
   } catch (err) {
@@ -977,7 +1061,7 @@ app.post('/api/admin/products', auth, requireAdmin, upload.single('image'), (req
 });
 
 app.put('/api/admin/products/:id', auth, requireAdmin, upload.single('image'), (req, res) => {
-  const { name, price, categoryId, status, description, details, terms, plans } = req.body || {};
+  const { name, price, categoryId, status, description, details, terms, plans, isTopSell, isHotProduct, isBestSearch, isSpecial, originalPrice, relatedContent } = req.body || {};
   if (categoryId) {
     const catId = Number(categoryId);
     const category = get('SELECT id FROM categories WHERE id = ?', [catId]);
@@ -1005,10 +1089,16 @@ app.put('/api/admin/products/:id', auth, requireAdmin, upload.single('image'), (
     terms: terms ?? product.terms,
     imageUrl: req.file ? `/uploads/${req.file.filename}` : product.imageUrl,
     plans: plansValue,
+    isTopSell: isTopSell !== undefined ? (Number(isTopSell) ? 1 : 0) : product.isTopSell,
+    isHotProduct: isHotProduct !== undefined ? (Number(isHotProduct) ? 1 : 0) : product.isHotProduct,
+    isBestSearch: isBestSearch !== undefined ? (Number(isBestSearch) ? 1 : 0) : product.isBestSearch,
+    isSpecial: isSpecial !== undefined ? (Number(isSpecial) ? 1 : 0) : product.isSpecial,
+    originalPrice: originalPrice ?? product.originalPrice,
+    relatedContent: relatedContent ?? product.relatedContent,
     categoryId: catId
   };
   run(
-    `UPDATE products SET name=?, slug=?, price=?, status=?, description=?, details=?, terms=?, imageUrl=?, plans=?, categoryId=?
+    `UPDATE products SET name=?, slug=?, price=?, status=?, description=?, details=?, terms=?, imageUrl=?, plans=?, isTopSell=?, isHotProduct=?, isBestSearch=?, isSpecial=?, originalPrice=?, relatedContent=?, categoryId=?
      WHERE id=?`,
     [
       updated.name,
@@ -1020,6 +1110,12 @@ app.put('/api/admin/products/:id', auth, requireAdmin, upload.single('image'), (
       updated.terms,
       updated.imageUrl,
       updated.plans,
+      updated.isTopSell,
+      updated.isHotProduct,
+      updated.isBestSearch,
+      updated.isSpecial,
+      updated.originalPrice,
+      updated.relatedContent,
       updated.categoryId,
       req.params.id
     ]
@@ -1045,6 +1141,11 @@ app.put('/api/admin/users/:id', auth, requireAdmin, (req, res) => {
   const nextRole = role ?? user.role;
   run('UPDATE users SET name = ?, role = ? WHERE id = ?', [nextName, nextRole, req.params.id]);
   res.json({ id: user.id, name: nextName, email: user.email, role: nextRole, isBangladeshi: !!user.isBangladeshi });
+});
+
+app.delete('/api/admin/users/:id', auth, requireAdmin, (req, res) => {
+  run('DELETE FROM users WHERE id = ?', [req.params.id]);
+  res.json({ success: true, message: 'User deleted.' });
 });
 
 app.get('/api/admin/orders', auth, requireAdmin, (_req, res) => {

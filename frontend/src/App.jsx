@@ -1,10 +1,11 @@
 import { BrowserRouter, Routes, Route, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './styles.css';
 
 const API_URL = 'https://api.subsgeneral.com';
+const WHATSAPP_NUMBER = '8801857169996';
 
 
 const parsePrice = (value) => {
@@ -54,71 +55,164 @@ const authFetch = (token, path, options = {}) => {
   });
 };
 
-function Layout({ children, user, onLogout, cartCount }) {
+function Layout({ children, user, onLogout, cartCount, homeSearch, onHomeSearchChange }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuCategories, setMenuCategories] = useState([]);
+  const [searchProducts, setSearchProducts] = useState([]);
   const location = useLocation();
   const showFooter = location.pathname === '/' && user?.role !== 'admin';
+  const showGlobalSearch = user?.role !== 'admin' && location.pathname !== '/admin';
 
   useEffect(() => {
-    fetch(`${API_URL}/api/categories`)
-      .then((r) => r.json())
-      .then((data) => setMenuCategories(Array.isArray(data) ? data : []))
-      .catch(() => setMenuCategories([]));
+    Promise.all([
+      fetch(`${API_URL}/api/categories`).then((r) => r.json()).catch(() => []),
+      fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => [])
+    ])
+      .then(([categoryData, productData]) => {
+        setMenuCategories(Array.isArray(categoryData) ? categoryData : []);
+        setSearchProducts(Array.isArray(productData) ? productData : []);
+      })
+      .catch(() => {
+        setMenuCategories([]);
+        setSearchProducts([]);
+      });
   }, []);
+
+  const topSearchResults = useMemo(() => {
+    const q = homeSearch.trim().toLowerCase();
+    if (!q || !showGlobalSearch) return [];
+    return searchProducts
+      .filter((item) => {
+        const name = item.name?.toLowerCase() || '';
+        const category = item.category?.name?.toLowerCase() || '';
+        return name.includes(q) || category.includes(q);
+      })
+      .slice(0, 6);
+  }, [homeSearch, searchProducts, showGlobalSearch]);
 
   return (
     <div className="page">
       <header className="topbar new-topbar">
-        <div className="left-controls">
-          <button className="icon-btn" onClick={() => setMenuOpen(true)} aria-label="Open menu">
-            <span></span>
-            <span></span>
-            <span></span>
-          </button>
-          <div className="brand">
-            <img className="brand-logo" src="/asset/subsgeneral_4K_fullpill-2.jpg" alt="SubsGeneral logo" />
+        <button className="icon-btn hamburger-btn" onClick={() => setMenuOpen(true)} aria-label="Open menu">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <div className="brand">
+          <Link to="/" className="brand-text-logo">
+            <span className="logo-subs">Subs</span><span className="logo-general">General</span>
+          </Link>
+        </div>
+        {user?.role !== 'admin' && (
+          <Link className="cart-icon-btn" to="/cart" aria-label={`Cart (${cartCount})`}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+            </svg>
+            {cartCount > 0 && <span className="cart-badge">{cartCount}</span>}
+          </Link>
+        )}
+      </header>
+      {showGlobalSearch && (
+        <div className="global-search-bar">
+          <div className="global-search-inner">
+            <input
+              className="global-search-input"
+              type="text"
+              placeholder="Search for products"
+              value={homeSearch}
+              onChange={(e) => onHomeSearchChange(e.target.value)}
+            />
+            <button className="global-search-btn" aria-label="Search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </button>
+            {homeSearch.trim() && (
+              <div className="top-search-results">
+                {topSearchResults.length > 0 ? (
+                  topSearchResults.map((item) => (
+                    <Link
+                      key={item.id ?? item._id}
+                      className="top-search-item"
+                      to={`/product/${item.id ?? item._id}`}
+                      onClick={() => onHomeSearchChange('')}
+                    >
+                      <strong>{item.name}</strong>
+                      <span>{item.category?.name || 'Product'}</span>
+                    </Link>
+                  ))
+                ) : (
+                  <div className="top-search-empty">No matching products found.</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-        <div className="top-actions">
-          {user?.role !== 'admin' && <Link className="btn outline" to="/cart">Cart ({cartCount})</Link>}
+      )}
+      <div className={`side-menu ${menuOpen ? 'open' : ''}`}>
+        <div className="side-menu-header">
+          <h3>Menu</h3>
+          <button className="icon-btn close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+            ✕
+          </button>
+        </div>
+        <div className="side-menu-list">
+          <Link to="/" onClick={() => setMenuOpen(false)}>Home</Link>
           {user ? (
             <>
               {user.role === 'admin' ? (
-                <Link className="btn outline" to="/admin">Admin</Link>
+                <Link to="/admin" onClick={() => setMenuOpen(false)}>Admin Panel</Link>
               ) : (
-                <Link className="btn outline" to="/dashboard">Dashboard</Link>
+                <Link to="/dashboard" onClick={() => setMenuOpen(false)}>Dashboard</Link>
               )}
-              {user.role !== 'admin' && <Link className="btn outline" to="/support">Support</Link>}
-              <Link className="btn outline" to="/profile">Profile</Link>
-              <button className="btn" onClick={onLogout}>Logout</button>
+              {user.role !== 'admin' && <Link to="/support" onClick={() => setMenuOpen(false)}>Support</Link>}
+              <Link to="/profile" onClick={() => setMenuOpen(false)}>Profile</Link>
+              <button className="side-menu-btn" onClick={() => { setMenuOpen(false); onLogout(); }}>Logout</button>
             </>
           ) : (
             <>
-              <Link className="btn outline" to="/login">Login</Link>
-              <Link className="btn" to="/register">Register</Link>
+              <Link to="/login" onClick={() => setMenuOpen(false)}>Login</Link>
+              <Link to="/register" onClick={() => setMenuOpen(false)}>Register</Link>
             </>
           )}
-        </div>
-        <div className="top-home-link">
-          <Link to="/">Home</Link>
-        </div>
-      </header>
-        <div className={`side-menu ${menuOpen ? 'open' : ''}`}>
-          <div className="side-menu-header">
-            <h3>Categories</h3>
-            <button className="icon-btn close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
-              ✕
-            </button>
-          </div>
-          <div className="side-menu-list">
-            {menuCategories.map((c) => (
+          {menuCategories.length > 0 && <div className="side-menu-divider"><span>Categories</span></div>}
+          {menuCategories.map((c) => (
             <Link key={c.id ?? c._id} to={`/category/${c.slug}`} onClick={() => setMenuOpen(false)}>
               {c.name}
             </Link>
-            ))}
+          ))}
+        </div>
+        <div className="side-menu-footer">
+          <div className="social-row">
+            <a href="https://facebook.com/SubsGeneral" className="social-icon" aria-label="Facebook" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M15 3h-3a5 5 0 0 0-5 5v3H4v4h3v6h4v-6h3l1-4h-4V8a1 1 0 0 1 1-1h3V3z" />
+              </svg>
+            </a>
+            <a href="https://www.instagram.com/SubsGeneral" className="social-icon" aria-label="Instagram" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4zm10 2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-5 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6zm5.3-2.3a1 1 0 1 1-2 0 1 1 0 0 1 2 0z" />
+              </svg>
+            </a>
+            <a href="http://www.youtube.com/@SubsGeneral" className="social-icon" aria-label="YouTube" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M22 7.5c0-1.4-1.1-2.5-2.5-2.7C17.6 4.5 12 4.5 12 4.5s-5.6 0-7.5.3C3.1 5 2 6.1 2 7.5v9c0 1.4 1.1 2.5 2.5 2.7 1.9.3 7.5.3 7.5.3s5.6 0 7.5-.3c1.4-.2 2.5-1.3 2.5-2.7v-9zm-12 8V9l6 3-6 3z" />
+              </svg>
+            </a>
+            <a href="https://www.tiktok.com/@subsgeneral" className="social-icon" aria-label="TikTok" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M14.5 3c.5 2.1 2.1 3.7 4.5 4.1v3a8.1 8.1 0 0 1-4.5-1.5v7.4a5.5 5.5 0 1 1-5.5-5.5c.4 0 .8 0 1.1.1v3a2.5 2.5 0 1 0 1.4 2.3V3h3z" />
+              </svg>
+            </a>
+            <a href="https://x.com/yourtrulyalex" className="social-icon" aria-label="X" target="_blank" rel="noreferrer">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M4 4h4.2l4.1 5.5L16.9 4H20l-5.9 7.6L20 20h-4.2l-4.6-6.2L6.9 20H4l6.5-8.4L4 4z" />
+              </svg>
+            </a>
           </div>
         </div>
+      </div>
       {menuOpen && <div className="side-menu-backdrop" onClick={() => setMenuOpen(false)}></div>}
       {children}
       {showFooter && (
@@ -126,34 +220,34 @@ function Layout({ children, user, onLogout, cartCount }) {
           <div className="footer-grid">
             <div>
               <div className="brand">
-                
-                <span className="brand-text">SubsGeneral</span>
+
+                <span className="brand-text-logo"><span className="logo-subs">Subs</span><span className="logo-general">General</span></span>
               </div>
               <p>Subscriptions made easy with local and crypto payments.</p>
               <div className="social-row">
                 <a href="https://facebook.com/SubsGeneral" className="social-icon" aria-label="Facebook">
                   <svg viewBox="0 0 24 24" role="img">
-                    <path d="M15 3h-3a5 5 0 0 0-5 5v3H4v4h3v6h4v-6h3l1-4h-4V8a1 1 0 0 1 1-1h3V3z"/>
+                    <path d="M15 3h-3a5 5 0 0 0-5 5v3H4v4h3v6h4v-6h3l1-4h-4V8a1 1 0 0 1 1-1h3V3z" />
                   </svg>
                 </a>
                 <a href="https://www.instagram.com/SubsGeneral" className="social-icon" aria-label="Instagram">
                   <svg viewBox="0 0 24 24" role="img">
-                    <path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4zm10 2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-5 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6zm5.3-2.3a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+                    <path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4zm10 2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-5 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6zm5.3-2.3a1 1 0 1 1-2 0 1 1 0 0 1 2 0z" />
                   </svg>
                 </a>
                 <a href="http://www.youtube.com/@SubsGeneral" className="social-icon" aria-label="YouTube">
                   <svg viewBox="0 0 24 24" role="img">
-                    <path d="M22 7.5c0-1.4-1.1-2.5-2.5-2.7C17.6 4.5 12 4.5 12 4.5s-5.6 0-7.5.3C3.1 5 2 6.1 2 7.5v9c0 1.4 1.1 2.5 2.5 2.7 1.9.3 7.5.3 7.5.3s5.6 0 7.5-.3c1.4-.2 2.5-1.3 2.5-2.7v-9zm-12 8V9l6 3-6 3z"/>
+                    <path d="M22 7.5c0-1.4-1.1-2.5-2.5-2.7C17.6 4.5 12 4.5 12 4.5s-5.6 0-7.5.3C3.1 5 2 6.1 2 7.5v9c0 1.4 1.1 2.5 2.5 2.7 1.9.3 7.5.3 7.5.3s5.6 0 7.5-.3c1.4-.2 2.5-1.3 2.5-2.7v-9zm-12 8V9l6 3-6 3z" />
                   </svg>
                 </a>
                 <a href="https://www.tiktok.com/@subsgeneral" className="social-icon" aria-label="TikTok">
                   <svg viewBox="0 0 24 24" role="img">
-                    <path d="M14.5 3c.5 2.1 2.1 3.7 4.5 4.1v3a8.1 8.1 0 0 1-4.5-1.5v7.4a5.5 5.5 0 1 1-5.5-5.5c.4 0 .8 0 1.1.1v3a2.5 2.5 0 1 0 1.4 2.3V3h3z"/>
+                    <path d="M14.5 3c.5 2.1 2.1 3.7 4.5 4.1v3a8.1 8.1 0 0 1-4.5-1.5v7.4a5.5 5.5 0 1 1-5.5-5.5c.4 0 .8 0 1.1.1v3a2.5 2.5 0 1 0 1.4 2.3V3h3z" />
                   </svg>
                 </a>
                 <a href="https://x.com/yourtrulyalex" className="social-icon" aria-label="X">
                   <svg viewBox="0 0 24 24" role="img">
-                    <path d="M4 4h4.2l4.1 5.5L16.9 4H20l-5.9 7.6L20 20h-4.2l-4.6-6.2L6.9 20H4l6.5-8.4L4 4z"/>
+                    <path d="M4 4h4.2l4.1 5.5L16.9 4H20l-5.9 7.6L20 20h-4.2l-4.6-6.2L6.9 20H4l6.5-8.4L4 4z" />
                   </svg>
                 </a>
               </div>
@@ -173,13 +267,13 @@ function Layout({ children, user, onLogout, cartCount }) {
           </div>
           <div className="footer-bottom">
             <span>© 2026, SubsGeneral - OTT Subscriptions BD</span>
-            
+
           </div>
         </footer>
       )}
       <a
         className="floating-chat"
-        href="https://wa.me/8801857169996"
+        href={`https://wa.me/${WHATSAPP_NUMBER}`}
         target="_blank"
         rel="noreferrer"
         aria-label="WhatsApp chat"
@@ -221,13 +315,13 @@ function HeroBanner() {
   return (
     <section className="hero fanflix-hero">
       {current.imageUrl && (
-        <div
-          className="hero-bg"
-          style={{ backgroundImage: `url(${API_URL}${current.imageUrl})` }}
+        <img
+          className="hero-img"
+          src={`${API_URL}${current.imageUrl}`}
+          alt={current.title}
         />
       )}
       <div className="hero-overlay" />
-      <div className="hero-content"></div>
       <div className="slider-dots">
         {(slides.length ? slides : [current]).map((_, idx) => (
           <button
@@ -243,42 +337,71 @@ function HeroBanner() {
 }
 
 function ProductSection({ title, items, onAddToCart }) {
+  const sliderRef = useRef(null);
+  const scroll = (dir) => {
+    sliderRef.current?.scrollBy({ left: dir * 260, behavior: 'smooth' });
+  };
+
   return (
-    <section className="product-section">
-      <div className="section-title">
-        <span className="section-dot"></span>
-        <h2>{title}</h2>
-      </div>
-      <div className="product-grid">
-        {items.map((item) => (
-          <div className="product-card" key={item.id}>
+    <section className="product-section ps-section">
+      {title && (
+        <div className="ps-header">
+          <h2 className="ps-title">{title}</h2>
+          <div className="ps-line" />
+          <div className="ps-arrows">
+            <button className="ps-arrow" onClick={() => scroll(-1)} aria-label="Previous">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button className="ps-arrow" onClick={() => scroll(1)} aria-label="Next">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+      {items.length > 0 ? (
+        <div className="ps-slider" ref={sliderRef}>
+          {items.map((item) => (
             <div
-              className={`product-image ${item.status === 'out' ? 'is-muted' : ''} ${item.imageUrl ? 'has-image' : ''}`}
-              style={item.imageUrl ? { backgroundImage: `url(${API_URL}${item.imageUrl})` } : undefined}
+              className={`ps-card${item.isSpecial ? ' ps-card--special' : ''}${item.status === 'out' ? ' ps-card--out' : ''}`}
+              key={item.id}
             >
-              <div className="grid-bg"></div>
-              <div className="product-logo">{item.name.split(' ')[0]}</div>
-              {item.status === 'out' && <span className="status">Out of Stock</span>}
-            </div>
-            <div className="product-body">
-              <h3>{item.name}</h3>
-              <p className="price">{item.price}</p>
-              <div className="row-actions">
-                <Link className={`btn outline ${item.status === 'out' ? 'disabled' : ''}`} to={`/product/${item.id}`}>
-                  View Product
-                </Link>
+              <Link to={`/product/${item.id}`} className="ps-card-link">
+                <div className="ps-card-img">
+                  {item.imageUrl ? (
+                    <img src={`${API_URL}${item.imageUrl}`} alt={item.name} />
+                  ) : (
+                    <div className="ps-card-initial">{(item.name || '?').charAt(0).toUpperCase()}</div>
+                  )}
+                  {item.status === 'out' && <span className="ps-badge ps-badge--out">Out of Stock</span>}
+                  {item.isSpecial && <span className="ps-badge ps-badge--sale">Sale</span>}
+                </div>
+                <div className="ps-card-body">
+                  <p className="ps-card-name">{item.name}</p>
+                  {item.isSpecial && item.originalPrice && (
+                    <p className="ps-card-old-price">{item.originalPrice}</p>
+                  )}
+                  <p className="ps-card-price">
+                    {item.isSpecial ? `From Tk ${item.price}` : item.price} BDT
+                  </p>
+                </div>
+              </Link>
+              <div className="ps-card-actions">
+                <Link
+                  className={`btn outline small${item.status === 'out' ? ' disabled' : ''}`}
+                  to={`/product/${item.id}`}
+                >View</Link>
                 <button
-                  className={`btn outline ${item.status === 'out' ? 'disabled' : ''}`}
+                  className={`btn small${item.status === 'out' ? ' disabled' : ''}`}
                   onClick={() => item.status !== 'out' && onAddToCart({ ...item, productId: item.id })}
                   disabled={item.status === 'out'}
-                >
-                  Add to Cart
-                </button>
+                >+ Cart</button>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="section-empty">No products added here yet.</div>
+      )}
     </section>
   );
 }
@@ -480,6 +603,17 @@ function ProductDetail({ onAddToCart }) {
     navigate('/checkout');
   };
 
+  const { label: whatsappPlanLabel, price: whatsappPlanPrice } = resolvePlan();
+  const buyFromWhatsAppText = [
+    `Hello, I want to buy ${product.name}.`,
+    whatsappPlanLabel ? `Plan: ${whatsappPlanLabel}` : '',
+    whatsappPlanPrice ? `Price: ${whatsappPlanPrice}` : '',
+    `Product: ${window.location.href}`
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const buyFromWhatsAppUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(buyFromWhatsAppText)}`;
+
   return (
     <main className="detail">
       <div className="detail-card">
@@ -491,11 +625,6 @@ function ProductDetail({ onAddToCart }) {
             ) : (
               <div className="detail-logo">{product.name.split(' ')[0]}</div>
             )}
-          </div>
-          <div className="detail-thumbs">
-            <span className="thumb"></span>
-            <span className="thumb"></span>
-            <span className="thumb"></span>
           </div>
         </div>
         <div className="detail-right">
@@ -515,9 +644,14 @@ function ProductDetail({ onAddToCart }) {
             ))}
           </div>
           <div className="payment-pill">Payment Methods: Crypto, bKash, Nagad.</div>
-          <div className="row-actions">
+          <div className="action-buttons-grid">
             <button className="btn" onClick={buyNow}>Buy Now</button>
             <button className="btn outline" onClick={addToCart}>Add to Cart</button>
+            <a className="btn" href={buyFromWhatsAppUrl} target="_blank" rel="noreferrer" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <span>Buy from</span> <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.5 3.5A10.9 10.9 0 0 0 12 0C5.4 0 .1 5.3.1 11.8c0 2.1.5 4.1 1.5 5.9L0 24l6.5-1.7a12 12 0 0 0 5.5 1.4h.1c6.5 0 11.8-5.3 11.8-11.8 0-3.2-1.2-6.2-3.4-8.4ZM12 21.2h-.1c-1.8 0-3.6-.5-5.1-1.4l-.4-.2-3.9 1 1-3.8-.2-.4a9.1 9.1 0 0 1-1.4-4.9C1.9 6.6 6.6 2 12.1 2a9 9 0 0 1 6.4 2.6 9 9 0 0 1 2.6 6.4c0 5.6-4.6 10.2-10.1 10.2Zm5.6-7.7c-.3-.2-1.7-.8-2-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-.9 1.2-.2.2-.3.2-.6.1-.3-.2-1.2-.4-2.2-1.3-.8-.7-1.3-1.6-1.5-1.9-.2-.3 0-.4.1-.5l.4-.5.3-.5c.1-.2.1-.4 0-.6-.1-.2-.7-1.6-1-2.2-.3-.6-.5-.5-.7-.5h-.6c-.2 0-.6.1-.9.4-.3.3-1.2 1.1-1.2 2.7 0 1.6 1.2 3.2 1.4 3.4.2.2 2.4 3.7 5.9 5.1.8.3 1.4.5 1.9.6.8.2 1.5.2 2.1.1.6-.1 1.7-.7 2-1.4.2-.7.2-1.3.1-1.4-.1-.1-.3-.2-.6-.4Z" />
+              </svg>
+            </a>
           </div>
           {message && <div className="message-box">{message}</div>}
           <div className="info-box">
@@ -525,41 +659,151 @@ function ProductDetail({ onAddToCart }) {
           </div>
           <div className="related">
             <h3>Related Products</h3>
-            <div className="related-item">{product.name}</div>
+            <div className="related-item" dangerouslySetInnerHTML={{ __html: product.relatedContent || product.name }} />
           </div>
         </div>
       </div>
 
       <section className="detail-section">
         <h3>Details</h3>
-        <p className="muted">
-          {product.details || 'No extra details provided for this service yet.'}
-        </p>
+        <div className="muted" dangerouslySetInnerHTML={{ __html: product.details || 'No extra details provided for this service yet.' }} />
       </section>
 
       <section className="detail-section">
         <h3>Terms & Conditions</h3>
-        <p className="muted">
-          {product.terms || 'No terms provided for this service yet.'}
-        </p>
+        <div className="muted" dangerouslySetInnerHTML={{ __html: product.terms || 'No terms provided for this service yet.' }} />
       </section>
     </main>
   );
 }
 
-function Home({ onAddToCart }) {
+function CategoryGrid({ categories }) {
+  if (!categories.length) return null;
+  return (
+    <section className="category-grid-section">
+      <div className="category-grid">
+        {categories.map((cat) => (
+          <Link key={cat.id} to={`/category/${cat.slug}`} className="category-grid-card">
+            <div className="category-grid-img">
+              {cat.imageUrl ? (
+                <img src={`${API_URL}${cat.imageUrl}`} alt={cat.name} />
+              ) : (
+                <div className="category-grid-placeholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <rect x="3" y="3" width="18" height="18" rx="3"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                </div>
+              )}
+            </div>
+            <span className="category-grid-name">{cat.name}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Home({ onAddToCart, homeSearch }) {
   const [faqs, setFaqs] = useState([]);
+  const [productsList, setProductsList] = useState([]);
+  const [categories, setCategories] = useState([]);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/faqs`)
-      .then((r) => r.json())
-      .then((data) => setFaqs(Array.isArray(data) ? data : []))
-      .catch(() => setFaqs([]));
+    Promise.all([
+      fetch(`${API_URL}/api/faqs`).then((r) => r.json()).catch(() => []),
+      fetch(`${API_URL}/api/products`).then((r) => r.json()).catch(() => []),
+      fetch(`${API_URL}/api/categories`).then((r) => r.json()).catch(() => [])
+    ])
+      .then(([faqData, productData, categoryData]) => {
+        setFaqs(Array.isArray(faqData) ? faqData : []);
+        setProductsList(Array.isArray(productData) ? productData : []);
+        setCategories(Array.isArray(categoryData) ? categoryData : []);
+      })
+      .catch(() => {
+        setFaqs([]);
+        setProductsList([]);
+        setCategories([]);
+      });
   }, []);
+
+  const filteredProducts = useMemo(() => {
+    const q = homeSearch.trim().toLowerCase();
+    if (!q) return [];
+    return productsList
+      .filter((item) => {
+        const name = item.name?.toLowerCase() || '';
+        const category = item.category?.name?.toLowerCase() || '';
+        return name.includes(q) || category.includes(q);
+      })
+      .map((item) => ({
+        id: item.id ?? item._id,
+        name: item.name,
+        price: item.price,
+        status: item.status,
+        imageUrl: item.imageUrl || ''
+      }));
+  }, [productsList, homeSearch]);
+
+  const normalizedProducts = useMemo(
+    () =>
+      productsList.map((item) => ({
+        id: item.id ?? item._id,
+        name: item.name,
+        price: item.price,
+        status: item.status,
+        imageUrl: item.imageUrl || '',
+        category: item.category?.name || '',
+        details: item.details || '',
+        isTopSell: !!item.isTopSell,
+        isHotProduct: !!item.isHotProduct,
+        isBestSearch: !!item.isBestSearch
+      })),
+    [productsList]
+  );
+
+  const featuredSections = useMemo(
+    () =>
+      [
+        {
+          title: 'Top Selling Product',
+          items: normalizedProducts.filter((item) => item.isTopSell)
+        },
+        {
+          title: 'Hot Product',
+          items: normalizedProducts.filter((item) => item.isHotProduct)
+        },
+        {
+          title: 'Best Searched Product',
+          items: normalizedProducts.filter((item) => item.isBestSearch)
+        }
+      ],
+    [normalizedProducts]
+  );
 
   return (
     <main>
       <HeroBanner />
+      <CategoryGrid categories={categories} />
+      {homeSearch.trim() && (
+        filteredProducts.length > 0 ? (
+          <ProductSection title="Search Results" items={filteredProducts} onAddToCart={onAddToCart} />
+        ) : (
+          <section className="home-search-empty">
+            <div className="message-box">No matching products found.</div>
+          </section>
+        )
+      )}
+      {!homeSearch.trim() &&
+        featuredSections.map((section) => (
+          <ProductSection
+            key={section.title}
+            title={section.title}
+            items={section.items}
+            onAddToCart={onAddToCart}
+          />
+        ))}
       <section className="explore-banner">
         <div className="explore-card">
           <h2>Explore</h2>
@@ -754,7 +998,7 @@ function Register({ onAuth }) {
               checked={form.isBangladeshi}
               onChange={(e) => setForm({ ...form, isBangladeshi: e.target.checked })}
             />
-Are you a Bangladeshi Citizen?          </label>
+            Are you a Bangladeshi Citizen?          </label>
           <button className="btn" type="submit">Create Account</button>
         </form>
         {message && <p className="message-box">{message}</p>}
@@ -1073,7 +1317,7 @@ function Dashboard({ user, token }) {
     authFetch(token, '/api/orders')
       .then((res) => res.json())
       .then(setOrders)
-      .catch(() => {});
+      .catch(() => { });
   }, [token]);
 
   useEffect(() => {
@@ -1135,17 +1379,17 @@ function Dashboard({ user, token }) {
                 <div className="timeline">
                   {order.statusHistory?.map((entry, idx) => (
                     <div className="timeline-item" key={idx}>
-                    <span className="dot"></span>
-                    <div>
-                      <strong>{entry.status}</strong>
-                      <div className="muted">{new Date(entry.at).toLocaleString()}</div>
-                      {entry.note && <div className="muted">{entry.note}</div>}
+                      <span className="dot"></span>
+                      <div>
+                        <strong>{entry.status}</strong>
+                        <div className="muted">{new Date(entry.at).toLocaleString()}</div>
+                        {entry.note && <div className="muted">{entry.note}</div>}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          );
+            );
           })}
         </div>
       </div>
@@ -1153,8 +1397,18 @@ function Dashboard({ user, token }) {
   );
 }
 
-function Cart({ cartItems, onRemove, onClear }) {
+function Cart({ cartItems, onRemove, onClear, user }) {
+  const navigate = useNavigate();
   const total = cartItems.reduce((sum, item) => sum + parsePrice(item.price), 0);
+
+  const handleCheckout = () => {
+    if (!user) {
+      toast.error('Please login first to continue checkout.');
+      return;
+    }
+    navigate('/checkout');
+  };
+
   return (
     <main className="dashboard">
       <div className="dashboard-card">
@@ -1175,7 +1429,9 @@ function Cart({ cartItems, onRemove, onClear }) {
           <div className="cart-footer">
             <span>Total: {total > 0 ? `${total} Taka` : 'See items'}</span>
             <div className="row-actions">
-              <Link className="btn outline" to="/checkout">Checkout</Link>
+              <button className={`btn outline ${!user ? 'disabled-look' : ''}`} onClick={handleCheckout}>
+                Checkout
+              </button>
               <button className="btn outline" onClick={onClear}>Clear Cart</button>
             </div>
           </div>
@@ -1195,16 +1451,21 @@ function Checkout({ cartItems, onClear }) {
 
   useEffect(() => {
     const token = localStorage.getItem('gc_token');
-    if (!token) return;
+    if (!token) {
+      toast.error('Please login first to continue checkout.');
+      navigate('/login');
+      return;
+    }
     authFetch(token, '/api/payment-instructions')
       .then((res) => res.json())
       .then((data) => setInstructions(Array.isArray(data) ? data : []))
       .catch(() => setInstructions([]));
-  }, []);
+  }, [navigate]);
 
   const placeOrder = async () => {
     const token = localStorage.getItem('gc_token');
     if (!token) {
+      toast.error('Please login first to continue checkout.');
       navigate('/login');
       return;
     }
@@ -1527,6 +1788,101 @@ function PaymentForm({ orderId, token, isBangladeshi, instructions, onSubmitted,
   );
 }
 
+function FeaturedProductsTab({ title, products, page, setPage, pageSize, search, flag, onToggle }) {
+  const [selectedProductId, setSelectedProductId] = useState('');
+
+  const assignedProducts = useMemo(
+    () => products.filter((product) => !!product[flag]),
+    [products, flag]
+  );
+
+  const availableProducts = useMemo(
+    () => products.filter((product) => !product[flag]),
+    [products, flag]
+  );
+
+  useEffect(() => {
+    if (!selectedProductId && availableProducts.length > 0) {
+      setSelectedProductId(String(availableProducts[0].id ?? availableProducts[0]._id));
+      return;
+    }
+    if (
+      selectedProductId &&
+      !availableProducts.some((product) => String(product.id ?? product._id) === String(selectedProductId))
+    ) {
+      setSelectedProductId(availableProducts[0] ? String(availableProducts[0].id ?? availableProducts[0]._id) : '');
+    }
+  }, [availableProducts, selectedProductId]);
+
+  const filteredAssignedProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return assignedProducts;
+    return assignedProducts.filter((product) =>
+      [product.name, product.status, product.category?.name]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(q))
+    );
+  }, [assignedProducts, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAssignedProducts.length / pageSize));
+  const start = (page - 1) * pageSize;
+  const pagedProducts = filteredAssignedProducts.slice(start, start + pageSize);
+
+  const addSelectedProduct = async () => {
+    if (!selectedProductId) return;
+    const product = products.find((item) => String(item.id ?? item._id) === String(selectedProductId));
+    if (!product) return;
+    await onToggle(product, flag, true);
+  };
+
+  return (
+    <div className="admin-section">
+      <div className="admin-form feature-picker">
+        <select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)}>
+          <option value="">Select product to add</option>
+          {availableProducts.map((product) => (
+            <option key={product.id ?? product._id} value={product.id ?? product._id}>
+              {product.name}
+            </option>
+          ))}
+        </select>
+        <button className="btn" onClick={addSelectedProduct} disabled={!selectedProductId}>
+          Add to {title}
+        </button>
+      </div>
+
+      {availableProducts.length === 0 && (
+        <div className="section-empty">No more products available to add in this section.</div>
+      )}
+
+      <div className="admin-list">
+        {pagedProducts.length > 0 ? (
+          pagedProducts.map((product) => (
+            <div key={product.id ?? product._id} className="admin-item admin-row">
+              <div>
+                <strong>{product.name}</strong>
+                <div className="muted">Category: {product.category?.name || '-'}</div>
+                <div className="muted">Status: {product.status}</div>
+              </div>
+              <div className="row-actions">
+                <button
+                  className="btn outline"
+                  onClick={() => onToggle(product, flag, false)}
+                >
+                  Remove from {title}
+                </button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="section-empty">No products assigned to {title} yet.</div>
+        )}
+      </div>
+      <Pagination page={page} total={totalPages} onPage={setPage} />
+    </div>
+  );
+}
+
 function AdminPanel({ user, token }) {
   const [tab, setTab] = useState('Products');
   const [categoriesList, setCategoriesList] = useState([]);
@@ -1554,13 +1910,19 @@ function AdminPanel({ user, token }) {
   const [adminTicketFile, setAdminTicketFile] = useState(null);
 
   const [newCategory, setNewCategory] = useState('');
+  const [newCategoryFile, setNewCategoryFile] = useState(null);
   const [newProduct, setNewProduct] = useState({
     name: '',
-    price: '',
     categoryId: '',
     status: 'in',
     details: '',
     terms: '',
+    isTopSell: false,
+    isHotProduct: false,
+    isBestSearch: false,
+    isSpecial: false,
+    originalPrice: '',
+    relatedContent: '',
     file: null,
     plans: [
       { label: '1 Month', price: '' },
@@ -1574,45 +1936,45 @@ function AdminPanel({ user, token }) {
   const [orderStatusMap, setOrderStatusMap] = useState({});
   const [newPayment, setNewPayment] = useState({ orderId: '', userId: '', amount: '', method: '', status: '' });
   const [paymentNoteMap, setPaymentNoteMap] = useState({});
-  const normalizePlans = (plans, fallbackPrice) => {
+  const normalizePlans = (plans) => {
     const cleaned = (plans || [])
       .map((p) => ({
         label: String(p.label || '').trim(),
         price: String(p.price || '').trim()
       }))
       .filter((p) => p.label && p.price);
-    if (cleaned.length === 0 && String(fallbackPrice || '').trim()) {
-      return [{ label: '1 Month', price: String(fallbackPrice).trim() }];
-    }
     return cleaned;
   };
 
+  const toArr = (v) => (Array.isArray(v) ? v : []);
+
   const loadAll = async () => {
     if (!token) return;
+    const safeJson = (r) => r.json().catch(() => []);
     const [cats, prods, orders, users, payments, statsData, faqs, reviews, pages, tickets] = await Promise.all([
-      authFetch(token, '/api/admin/categories').then((r) => r.json()),
-      authFetch(token, '/api/admin/products').then((r) => r.json()),
-      authFetch(token, '/api/admin/orders').then((r) => r.json()),
-      authFetch(token, '/api/admin/users').then((r) => r.json()),
-      authFetch(token, '/api/admin/payments').then((r) => r.json()),
-      authFetch(token, '/api/admin/stats').then((r) => r.json()),
-      authFetch(token, '/api/admin/faqs').then((r) => r.json()),
-      authFetch(token, '/api/admin/reviews').then((r) => r.json()),
-      authFetch(token, '/api/admin/pages').then((r) => r.json()),
-      authFetch(token, '/api/admin/tickets').then((r) => r.json())
+      authFetch(token, '/api/admin/categories').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/products').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/orders').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/users').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/payments').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/stats').then(safeJson).catch(() => null),
+      authFetch(token, '/api/admin/faqs').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/reviews').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/pages').then(safeJson).catch(() => []),
+      authFetch(token, '/api/admin/tickets').then(safeJson).catch(() => [])
     ]);
-    const slides = await authFetch(token, '/api/admin/slides').then((r) => r.json());
-    setCategoriesList(cats);
-    setProductsList(prods);
-    setOrdersList(orders);
-    setUsersList(users);
-    setPaymentsList(payments);
-    setFaqsList(faqs || []);
-    setReviewsList(reviews || []);
-    setPagesList(pages || []);
-    setTicketsList(tickets || []);
-    if (statsData) setStats(statsData);
-    if (slides) setSlidesList(slides);
+    const slides = await authFetch(token, '/api/admin/slides').then(safeJson).catch(() => []);
+    setCategoriesList(toArr(cats));
+    setProductsList(toArr(prods));
+    setOrdersList(toArr(orders));
+    setUsersList(toArr(users));
+    setPaymentsList(toArr(payments));
+    setFaqsList(toArr(faqs));
+    setReviewsList(toArr(reviews));
+    setPagesList(toArr(pages));
+    setTicketsList(toArr(tickets));
+    setSlidesList(toArr(slides));
+    if (statsData && !Array.isArray(statsData)) setStats(statsData);
   };
 
   useEffect(() => {
@@ -1632,29 +1994,36 @@ function AdminPanel({ user, token }) {
 
   const submitCategory = async () => {
     if (!newCategory.trim()) return;
-    const res = await authFetch(token, '/api/admin/categories', {
-      method: 'POST',
-      body: JSON.stringify({ name: newCategory })
-    });
+    const body = new FormData();
+    body.append('name', newCategory);
+    if (newCategoryFile) body.append('image', newCategoryFile);
+    const res = await authFetch(token, '/api/admin/categories', { method: 'POST', body });
     if (!res.ok) {
       toast.error('Category add failed.');
       return;
     }
     setNewCategory('');
+    setNewCategoryFile(null);
     toast.success('Category added.');
     loadAll();
   };
 
   const submitProduct = async () => {
-    if (!newProduct.name || !newProduct.price || !newProduct.categoryId) return;
+    const plans = normalizePlans(newProduct.plans);
+    if (!newProduct.name || !newProduct.categoryId || plans.length === 0) return;
     const body = new FormData();
-    const plans = normalizePlans(newProduct.plans, newProduct.price);
     body.append('name', newProduct.name);
-    body.append('price', newProduct.price);
+    body.append('price', plans[0].price);
     body.append('categoryId', newProduct.categoryId);
     body.append('status', newProduct.status);
     body.append('details', newProduct.details || '');
     body.append('terms', newProduct.terms || '');
+    body.append('isTopSell', newProduct.isTopSell ? '1' : '0');
+    body.append('isHotProduct', newProduct.isHotProduct ? '1' : '0');
+    body.append('isBestSearch', newProduct.isBestSearch ? '1' : '0');
+    body.append('isSpecial', newProduct.isSpecial ? '1' : '0');
+    body.append('originalPrice', newProduct.originalPrice || '');
+    body.append('relatedContent', newProduct.relatedContent || '');
     body.append('plans', JSON.stringify(plans));
     if (newProduct.file) body.append('image', newProduct.file);
     const res = await authFetch(token, '/api/admin/products', {
@@ -1671,11 +2040,16 @@ function AdminPanel({ user, token }) {
     toast.success('Product added.');
     setNewProduct({
       name: '',
-      price: '',
       categoryId: '',
       status: 'in',
       details: '',
       terms: '',
+      isTopSell: false,
+      isHotProduct: false,
+      isBestSearch: false,
+      isSpecial: false,
+      originalPrice: '',
+      relatedContent: '',
       file: null,
       plans: [
         { label: '1 Month', price: '' },
@@ -1862,33 +2236,45 @@ function AdminPanel({ user, token }) {
     setEditingProductId(p.id ?? p._id);
     setNewProduct({
       name: p.name,
-      price: p.price,
       categoryId: (p.category?.id ?? p.category?._id) || '',
       status: p.status,
       details: p.details || '',
       terms: p.terms || '',
+      isTopSell: !!p.isTopSell,
+      isHotProduct: !!p.isHotProduct,
+      isBestSearch: !!p.isBestSearch,
+      isSpecial: !!p.isSpecial,
+      originalPrice: p.originalPrice || '',
+      relatedContent: p.relatedContent || '',
       file: null,
       plans: Array.isArray(p.plans) && p.plans.length > 0
         ? p.plans
         : [
-            { label: '1 Month', price: p.price || '' },
-            { label: '2 Months', price: '' },
-            { label: '3 Months', price: '' }
-          ]
+          { label: '1 Month', price: p.price || '' },
+          { label: '2 Months', price: '' },
+          { label: '3 Months', price: '' }
+        ]
     });
     setPreviewUrl(p.imageUrl ? `${API_URL}${p.imageUrl}` : '');
   };
 
   const saveEditProduct = async () => {
     if (!editingProductId) return;
+    const plans = normalizePlans(newProduct.plans);
+    if (!newProduct.name || !newProduct.categoryId || plans.length === 0) return;
     const body = new FormData();
-    const plans = normalizePlans(newProduct.plans, newProduct.price);
     body.append('name', newProduct.name);
-    body.append('price', newProduct.price);
+    body.append('price', plans[0].price);
     body.append('categoryId', newProduct.categoryId);
     body.append('status', newProduct.status);
     body.append('details', newProduct.details || '');
     body.append('terms', newProduct.terms || '');
+    body.append('isTopSell', newProduct.isTopSell ? '1' : '0');
+    body.append('isHotProduct', newProduct.isHotProduct ? '1' : '0');
+    body.append('isBestSearch', newProduct.isBestSearch ? '1' : '0');
+    body.append('isSpecial', newProduct.isSpecial ? '1' : '0');
+    body.append('originalPrice', newProduct.originalPrice || '');
+    body.append('relatedContent', newProduct.relatedContent || '');
     body.append('plans', JSON.stringify(plans));
     if (newProduct.file) body.append('image', newProduct.file);
     const res = await authFetch(token, `/api/admin/products/${editingProductId}`, {
@@ -1903,11 +2289,16 @@ function AdminPanel({ user, token }) {
     setEditingProductId('');
     setNewProduct({
       name: '',
-      price: '',
       categoryId: '',
       status: 'in',
       details: '',
       terms: '',
+      isTopSell: false,
+      isHotProduct: false,
+      isBestSearch: false,
+      isSpecial: false,
+      originalPrice: '',
+      relatedContent: '',
       file: null,
       plans: [
         { label: '1 Month', price: '' },
@@ -1947,6 +2338,39 @@ function AdminPanel({ user, token }) {
     loadAll();
   };
 
+  const toggleFeaturedFlag = async (product, field, nextValue) => {
+    const plans = normalizePlans(
+      Array.isArray(product.plans) && product.plans.length > 0
+        ? product.plans
+        : [
+          { label: '1 Month', price: product.price || '' },
+          { label: '2 Months', price: '' },
+          { label: '3 Months', price: '' }
+        ]
+    );
+    const body = new FormData();
+    body.append('name', product.name);
+    body.append('price', plans[0]?.price || product.price || '');
+    body.append('categoryId', String(product.category?.id ?? product.category?._id ?? ''));
+    body.append('status', product.status || 'in');
+    body.append('details', product.details || '');
+    body.append('terms', product.terms || '');
+    body.append('isTopSell', field === 'isTopSell' ? (nextValue ? '1' : '0') : product.isTopSell ? '1' : '0');
+    body.append('isHotProduct', field === 'isHotProduct' ? (nextValue ? '1' : '0') : product.isHotProduct ? '1' : '0');
+    body.append('isBestSearch', field === 'isBestSearch' ? (nextValue ? '1' : '0') : product.isBestSearch ? '1' : '0');
+    body.append('plans', JSON.stringify(plans));
+    const res = await authFetch(token, `/api/admin/products/${product.id ?? product._id}`, {
+      method: 'PUT',
+      body
+    });
+    if (!res.ok) {
+      toast.error('Featured section update failed.');
+      return;
+    }
+    toast.success('Featured section updated.');
+    loadAll();
+  };
+
   const updatePaymentStatus = async (id, status) => {
     const res = await authFetch(token, `/api/admin/payments/${id}/status`, {
       method: 'POST',
@@ -1980,7 +2404,15 @@ function AdminPanel({ user, token }) {
     setPage(1);
   }, [tab, search]);
 
-  const pagedProducts = paginate(filtered(productsList, [(p) => p.name, (p) => p.price, (p) => p.status]));
+  const pagedProducts = paginate(
+    filtered(productsList, [
+      (p) => p.name,
+      (p) => p.status,
+      (p) => (p.isTopSell ? 'top sell' : ''),
+      (p) => (p.isHotProduct ? 'hot' : ''),
+      (p) => (p.isBestSearch ? 'best search' : '')
+    ])
+  );
   const pagedCategories = paginate(filtered(categoriesList, [(c) => c.name]));
   const pagedOrders = paginate(filtered(ordersList, [(o) => o.id ?? o._id, (o) => o.status]));
   const pagedUsers = paginate(filtered(usersList, [(u) => u.email, (u) => u.role]));
@@ -2005,7 +2437,7 @@ function AdminPanel({ user, token }) {
           onChange={(e) => setSearch(e.target.value)}
         />
         <div className="tabs admin-tabs">
-          {['Products', 'Categories', 'Orders', 'Users', 'Payments', 'Slides', 'FAQs', 'Reviews', 'Pages', 'Tickets'].map((label) => (
+          {['Products', 'Top Sell', 'Hot Product', 'Best Search', 'Categories', 'Orders', 'Users', 'Payments', 'Slides', 'FAQs', 'Reviews', 'Pages', 'Tickets'].map((label) => (
             <button key={label} className={`tab ${tab === label ? 'active' : ''}`} onClick={() => setTab(label)}>
               {label}
             </button>
@@ -2020,11 +2452,29 @@ function AdminPanel({ user, token }) {
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value)}
               />
+              <div className="admin-file-row">
+                <label className="admin-file-label">
+                  {newCategoryFile ? newCategoryFile.name : 'Choose category image'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => setNewCategoryFile(e.target.files[0] || null)}
+                  />
+                </label>
+              </div>
               <button className="btn" onClick={submitCategory}>Add Category</button>
             </div>
             <div className="admin-list">
               {pagedCategories.map((c) => (
                 <div key={c.id ?? c._id} className="admin-item admin-row">
+                  {c.imageUrl && (
+                    <img
+                      src={`${API_URL}${c.imageUrl}`}
+                      alt={c.name}
+                      className="admin-cat-thumb"
+                    />
+                  )}
                   <span>{c.name}</span>
                   <button className="btn outline" onClick={() => deleteCategory(c.id ?? c._id)}>Delete</button>
                 </div>
@@ -2041,11 +2491,6 @@ function AdminPanel({ user, token }) {
                 placeholder="Product name"
                 value={newProduct.name}
                 onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-              />
-              <input
-                placeholder="Price"
-                value={newProduct.price}
-                onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
               />
               {newProduct.plans.map((plan, idx) => (
                 <div className="plan-row" key={`plan-${idx}`}>
@@ -2108,6 +2553,23 @@ function AdminPanel({ user, token }) {
                 <option value="in">In Stock</option>
                 <option value="out">Out of Stock</option>
               </select>
+              <div style={{ padding: '10px 0', borderTop: '1px solid #333', gridColumn: '1 / -1' }}>
+                <label className="checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '8px', fontWeight: 'bold', color: '#00ff88' }}>
+                  <input
+                    type="checkbox"
+                    checked={newProduct.isSpecial || false}
+                    onChange={(e) => setNewProduct({ ...newProduct, isSpecial: e.target.checked })}
+                  />
+                  <span>Special Discount Design</span>
+                </label>
+                {newProduct.isSpecial && (
+                  <input
+                    placeholder="Original Price (e.g. Tk 700.00 BDT)"
+                    value={newProduct.originalPrice || ''}
+                    onChange={(e) => setNewProduct({ ...newProduct, originalPrice: e.target.value })}
+                  />
+                )}
+              </div>
               <textarea
                 placeholder="Details (shown on product page)"
                 value={newProduct.details}
@@ -2117,6 +2579,11 @@ function AdminPanel({ user, token }) {
                 placeholder="Terms & Conditions (shown on product page)"
                 value={newProduct.terms}
                 onChange={(e) => setNewProduct({ ...newProduct, terms: e.target.value })}
+              />
+              <textarea
+                placeholder="Related Products Content (optional, HTML allowed)"
+                value={newProduct.relatedContent || ''}
+                onChange={(e) => setNewProduct({ ...newProduct, relatedContent: e.target.value })}
               />
               <div
                 className="dropzone"
@@ -2143,7 +2610,20 @@ function AdminPanel({ user, token }) {
             <div className="admin-list">
               {pagedProducts.map((p) => (
                 <div key={p.id ?? p._id} className="admin-item admin-row">
-                  <span>{p.name} — {p.price} ({p.status})</span>
+                  <span>
+                    {p.name} ({p.status})
+                    {[
+                      p.isTopSell ? 'Top Sell' : '',
+                      p.isHotProduct ? 'Hot' : '',
+                      p.isBestSearch ? 'Best Search' : ''
+                    ].filter(Boolean).length > 0
+                      ? ` — ${[
+                        p.isTopSell ? 'Top Sell' : '',
+                        p.isHotProduct ? 'Hot' : '',
+                        p.isBestSearch ? 'Best Search' : ''
+                      ].filter(Boolean).join(', ')}`
+                      : ''}
+                  </span>
                   <div className="row-actions">
                     <button className="btn outline" onClick={() => startEditProduct(p)}>Edit</button>
                     <button className="btn outline" onClick={() => deleteProduct(p.id ?? p._id)}>Delete</button>
@@ -2151,8 +2631,47 @@ function AdminPanel({ user, token }) {
                 </div>
               ))}
             </div>
-            <Pagination page={page} total={totalPages(filtered(productsList, [(p) => p.name, (p) => p.price, (p) => p.status]))} onPage={setPage} />
+            <Pagination page={page} total={totalPages(filtered(productsList, [(p) => p.name, (p) => p.status]))} onPage={setPage} />
           </div>
+        )}
+
+        {tab === 'Top Sell' && (
+          <FeaturedProductsTab
+            title="Top Sell Product"
+            products={productsList}
+            page={page}
+            setPage={setPage}
+            pageSize={pageSize}
+            search={search}
+            flag="isTopSell"
+            onToggle={toggleFeaturedFlag}
+          />
+        )}
+
+        {tab === 'Hot Product' && (
+          <FeaturedProductsTab
+            title="Hot Product"
+            products={productsList}
+            page={page}
+            setPage={setPage}
+            pageSize={pageSize}
+            search={search}
+            flag="isHotProduct"
+            onToggle={toggleFeaturedFlag}
+          />
+        )}
+
+        {tab === 'Best Search' && (
+          <FeaturedProductsTab
+            title="Best Search Product"
+            products={productsList}
+            page={page}
+            setPage={setPage}
+            pageSize={pageSize}
+            search={search}
+            flag="isBestSearch"
+            onToggle={toggleFeaturedFlag}
+          />
         )}
 
         {tab === 'Orders' && (
@@ -2161,8 +2680,33 @@ function AdminPanel({ user, token }) {
               {pagedOrders.map((o) => (
                 <div key={o.id ?? o._id} className="admin-item">
                   <div className="admin-row">
-                    <span>{o.id ?? o._id} — {o.status}</span>
+                    <strong>Order #{o.id ?? o._id}</strong>
+                    <span className="muted">{o.status}</span>
                     <button className="btn outline" onClick={() => updateOrderStatus(o.id ?? o._id, o.status)}>Update</button>
+                  </div>
+
+                  <div className="admin-order-meta" style={{ margin: '10px 0', fontSize: '0.9rem', color: '#ccc' }}>
+                    {o.user && (
+                      <div style={{ marginBottom: '5px' }}>
+                        <strong>User:</strong> {o.user.name} ({o.user.email})
+                      </div>
+                    )}
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>Items:</strong>
+                      <ul style={{ paddingLeft: '20px', margin: '5px 0' }}>
+                        {(o.items || []).map((item, idx) => (
+                          <li key={idx}>{item.name} — {item.price}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>Total:</strong> {o.total}
+                    </div>
+                    {paymentsList.filter(p => p.orderId === o.id).map((p, idx) => (
+                      <div key={idx} style={{ color: '#aaa', fontSize: '0.85rem' }}>
+                        Payment: {p.method} | Trx: {p.trxId || 'N/A'} | Status: {p.status}
+                      </div>
+                    ))}
                   </div>
                   <div className="admin-form grid-form">
                     <select
@@ -2174,9 +2718,9 @@ function AdminPanel({ user, token }) {
                         }))
                       }
                     >
-                    {['Pending', 'Paid', 'Processing', 'Delivered', 'Completed', 'Cancelled'].map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
+                      {['Pending', 'Paid', 'Processing', 'Delivered', 'Completed', 'Cancelled'].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
                     </select>
                     <input
                       placeholder="Note"
@@ -2231,6 +2775,16 @@ function AdminPanel({ user, token }) {
                     </button>
                     <button className="btn outline" onClick={() => authFetch(token, `/api/admin/users/${u.id ?? u._id}`, { method: 'PUT', body: JSON.stringify({ role: 'admin' }) }).then(loadAll)}>Make Admin</button>
                     <button className="btn outline" onClick={() => authFetch(token, `/api/admin/users/${u.id ?? u._id}`, { method: 'PUT', body: JSON.stringify({ role: 'user' }) }).then(loadAll)}>Make User</button>
+                    <button
+                      className="btn outline"
+                      style={{ color: '#ff4757', borderColor: '#ff4757' }}
+                      onClick={() => {
+                        if (window.confirm('Are you sure you want to permanently delete this user?')) {
+                          authFetch(token, `/api/admin/users/${u.id ?? u._id}`, { method: 'DELETE' }).then(loadAll);
+                        }
+                      }}>
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))}
@@ -2586,6 +3140,7 @@ export default function App() {
   });
   const [token, setToken] = useState(() => localStorage.getItem('gc_token') || '');
   const [cartItems, setCartItems] = useState([]);
+  const [homeSearch, setHomeSearch] = useState('');
 
   const handleAuth = (data) => {
     if (data?.token) {
@@ -2625,9 +3180,15 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <Layout user={user} onLogout={handleLogout} cartCount={cartItems.length}>
+      <Layout
+        user={user}
+        onLogout={handleLogout}
+        cartCount={cartItems.length}
+        homeSearch={homeSearch}
+        onHomeSearchChange={setHomeSearch}
+      >
         <Routes>
-          <Route path="/" element={<Home onAddToCart={addToCart} />} />
+          <Route path="/" element={<Home onAddToCart={addToCart} homeSearch={homeSearch} />} />
           <Route path="/product/:id" element={<ProductDetail onAddToCart={addToCart} />} />
           <Route path="/register" element={<Register onAuth={handleAuth} />} />
           <Route path="/login" element={<Login onAuth={handleAuth} />} />
@@ -2636,7 +3197,7 @@ export default function App() {
           <Route path="/explore" element={<Explore onAddToCart={addToCart} />} />
           <Route path="/dashboard" element={<Dashboard user={user} token={token} />} />
           <Route path="/profile" element={<Profile user={user} onUpdateUser={updateUser} />} />
-          <Route path="/cart" element={<Cart cartItems={cartItems} onRemove={removeFromCart} onClear={clearCart} />} />
+          <Route path="/cart" element={<Cart cartItems={cartItems} onRemove={removeFromCart} onClear={clearCart} user={user} />} />
           <Route path="/checkout" element={<Checkout cartItems={cartItems} onClear={clearCart} />} />
           <Route path="/order/:id" element={<OrderDetail />} />
           <Route path="/support" element={<SupportTickets user={user} token={token} />} />

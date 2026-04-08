@@ -29,8 +29,8 @@ SQLITE_PATH=./subcheap.db
 JWT_SECRET=change-me-please
 
 # Admin
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=StrongPassword123!
+ADMIN_EMAIL=....
+ADMIN_PASSWORD=....
 
 # SMTP (for reset password)
 SMTP_HOST=smtp.gmail.com
